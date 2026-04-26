@@ -1,4 +1,4 @@
-name: Run Weather App
+name: weatherAppFetcher
 on: [push]
 
 jobs:
