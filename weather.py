@@ -5,89 +5,91 @@ import base64
 import json
 
 # --- CONFIG ---
-# Ensure this matches your subdomain exactly
 CONJUR_URL = "https://nranktest.secretsmgr.cyberark.cloud/api"
 AUTHN_ID = "githubWeatherAuthenticator"
 ACCOUNT = "conjur"
 
+def decode_and_print_jwt(jwt):
+    """Decodes the JWT payload to see what GitHub is actually sending."""
+    try:
+        # JWTs are [Header].[Payload].[Signature]
+        parts = jwt.split('.')
+        if len(parts) != 3:
+            print("Invalid JWT format.")
+            return
+        
+        payload = parts[1]
+        # Fix base64 padding
+        payload += '=' * (4 - len(payload) % 4)
+        decoded = json.loads(base64.b64decode(payload).decode('utf-8'))
+        
+        print("\n" + "="*50)
+        print("--- DEBUG: GITHUB JWT CLAIMS (The Passport) ---")
+        print("="*50)
+        # We care most about these three:
+        print(f"ISS (Issuer):   {decoded.get('iss')}")
+        print(f"AUD (Audience): {decoded.get('aud')}")
+        print(f"WORKFLOW:       {decoded.get('workflow')}")
+        print(f"REPO:           {decoded.get('repository')}")
+        print("="*50 + "\n")
+        return decoded
+    except Exception as e:
+        print(f"Could not decode JWT for debugging: {e}")
+
 def get_github_jwt():
-    """Fetches the OIDC JWT from the GitHub Runner environment."""
     url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
     token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-    
-    if not url or not token:
-        print("Error: GitHub OIDC variables missing. Check your YAML 'permissions'.")
-        sys.exit(1)
-        
-    # We request audience 'conjur' to match the Authenticator configuration
+    # Requesting 'conjur' as the audience
     headers = {"Authorization": f"bearer {token}"}
     resp = requests.get(f"{url}&audience=conjur", headers=headers)
     resp.raise_for_status()
     return resp.json()['value']
 
 def get_conjur_token(jwt):
-    """Exchanges the GitHub JWT for a Conjur Session Token."""
     jwt = jwt.strip()
+    decode_and_print_jwt(jwt) # Show us the claims in the log!
     
-    # THE "SHORT" URL: We do NOT put the host ID in the URL path.
-    # Conjur finds the identity 'weatherAppFetcher' via the 'workflow' claim in the token.
-    auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/authenticate"
+    # We are using the "Direct Login" URL to remove any mapping ambiguity
+    # This tells Conjur: "I am host/data/weatherAppFetcher, check my JWT."
+    login_id = "host/data/weatherAppFetcher".replace("/", "%2F")
+    auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/{login_id}/authenticate"
+    
+    print(f"Attempting login to: {auth_url}")
     
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    
     try:
-        # Send the JWT in the body as 'jwt=VALUE'
         response = requests.post(auth_url, data=f"jwt={jwt}", headers=headers, timeout=15)
         
         if response.status_code != 200:
-            print(f"--- LOGIN FAILED ---")
+            print(f"--- AUTHENTICATION REJECTED ---")
             print(f"Status: {response.status_code}")
-            print(f"Body:   {response.text}")
-            print(f"URL Attempted: {auth_url}")
+            print(f"Error:  {response.text if response.text else '[Empty Body - Check Issuer/Audience Mapping]'}")
             sys.exit(1)
             
-        # The response text IS the token. We base64 encode it for the 'Token token=' header.
         return base64.b64encode(response.text.encode()).decode()
     except Exception as e:
-        print(f"Handshake failed: {e}")
+        print(f"Request failed: {e}")
         sys.exit(1)
 
 def get_secret(path, token):
-    """Fetches a secret. Errors here mean the 'Delegation Group' is likely missing the workload."""
-    encoded_path = path.replace('/', '%2F')
-    url = f"{CONJUR_URL}/secrets/{ACCOUNT}/variable/{encoded_path}"
-    
+    url = f"{CONJUR_URL}/secrets/{ACCOUNT}/variable/{path.replace('/', '%2F')}"
     headers = {"Authorization": f'Token token="{token}"'}
     resp = requests.get(url, headers=headers)
-    
     if resp.status_code != 200:
-        print(f"--- SECRET FETCH FAILED ---")
-        print(f"Path:   {path}")
-        print(f"Status: {resp.status_code}")
-        print(f"Error:  {resp.text}")
+        print(f"Secret Error: {resp.status_code} - {resp.text}")
         sys.exit(1)
     return resp.text
 
 if __name__ == "__main__":
-    print("--- 1. Authenticating with Conjur Cloud (Secretless) ---")
-    github_jwt = get_github_jwt()
-    conjur_session = get_conjur_token(github_jwt)
-    print("Handshake successful! Logged in.")
+    print("--- Starting Secretless App ---")
+    jwt = get_github_jwt()
+    conjur_token = get_conjur_token(jwt)
     
-    print("\n--- 2. Pulling API Keys from Vault ---")
-    # Paths from your synced Safe
-    api_key = get_secret("data/vault/DSOWeatherApp/Website-GenericWebApp-10.0.0.1-weatherAPIKey/password", conjur_session)
-    city = get_secret("data/vault/DSOWeatherApp/Website-GenericWebApp-UserSelectedCity-WeatherCity/password", conjur_session)
+    print("Handshake Success! Fetching secrets...")
+    api_key = get_secret("data/vault/DSOWeatherApp/Website-GenericWebApp-10.0.0.1-weatherAPIKey/password", conjur_token)
+    city = get_secret("data/vault/DSOWeatherApp/Website-GenericWebApp-UserSelectedCity-WeatherCity/password", conjur_token)
     
-    print(f"Target City: {city}")
-    
-    print("\n--- 3. Weather Report ---")
-    weather_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-    w_res = requests.get(weather_url)
-    
-    if w_res.status_code == 200:
-        data = w_res.json()
-        print(f"SUCCESS!")
-        print(f"Current weather in {data['name']}: {data['main']['temp']}°C, {data['weather'][0]['description']}.")
-    else:
-        print(f"Weather API error: {w_res.status_code}")
+    print(f"\n--- Weather for {city} ---")
+    w_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+    data = requests.get(w_url).json()
+    print(f"Temp: {data['main']['temp']}°C | Sky: {data['weather'][0]['description']}")
