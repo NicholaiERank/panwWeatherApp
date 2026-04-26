@@ -1,0 +1,14 @@
+name: Run Weather App
+on: [push] # Run every time we push code
+
+jobs:
+  check-weather:
+    runs-on: self-hosted # This is the magic phrase
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Script
+        run: |
+          source venv/bin/activate
+          python3 weather.py "Melbourne"
