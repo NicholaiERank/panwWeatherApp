@@ -5,14 +5,10 @@ import base64
 import json
 
 # --- CONJUR CONFIGURATION ---
-# Replace <TENANT> with your actual CyberArk Cloud tenant name
+# Ensure this matches your log: https://nranktest.cyberark.cloud/api
 CONJUR_URL = "https://nranktest.cyberark.cloud/api"
 AUTHN_ID = "githubWeatherAuthenticator"
 ACCOUNT = "conjur"
-
-# The Login ID is: host/<IdentityPath>/<WorkloadID>
-# Based on our fix: Identity Path is 'data', Workload is 'weatherAppFetcher'
-CONJUR_LOGIN = "host/data/weatherAppFetcher"
 
 def get_github_jwt():
     """Fetches the OIDC JWT from the GitHub Runner environment."""
@@ -24,25 +20,35 @@ def get_github_jwt():
         print("Make sure 'permissions: id-token: write' is in your YAML.")
         sys.exit(1)
         
-    # We add 'audience=conjur' to match the authenticator config
+    # We add 'audience=conjur' to match the authenticator expectations
     headers = {"Authorization": f"bearer {request_token}"}
     response = requests.get(f"{request_url}&audience=conjur", headers=headers)
     response.raise_for_status()
     return response.json()['value']
 
 def get_conjur_token(jwt):
-    """Exchanges the GitHub JWT for a Base64-encoded Conjur Session Token."""
-    encoded_login = CONJUR_LOGIN.replace("/", "%2F")
-    auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/{encoded_login}/authenticate"
+    """Exchanges the GitHub JWT for a Conjur Session Token."""
+    # NO LOGIN ID IN THE URL when token-app-property is used!
+    auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/authenticate"
     
-    # Send the JWT in the request body as 'jwt=VALUE'
+    print(f"Post to: {auth_url}") # Debugging
+    
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept-Encoding": "base64"
+    }
+    
     try:
-        response = requests.post(auth_url, data=f"jwt={jwt}", timeout=10)
+        # Pass the JWT in the body
+        response = requests.post(auth_url, data=f"jwt={jwt}", headers=headers, timeout=10)
         response.raise_for_status()
         # Conjur session tokens must be Base64 encoded for the Authorization header
         return base64.b64encode(response.text.encode()).decode()
     except Exception as e:
         print(f"Failed to authenticate with Conjur: {e}")
+        # Print response text if available to see the real error
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response: {e.response.text}")
         sys.exit(1)
 
 def get_secret(variable_path, conjur_token):
@@ -64,7 +70,7 @@ def fetch_weather(city, api_key):
         res = requests.get(url)
         res.raise_for_status()
         data = res.json()
-        print("\n--- WEATHER REPORT (SECURELY FETCHED) ---")
+        print("\n--- WEATHER REPORT (VIA CONJUR CLOUD) ---")
         print(f"City: {data['name']}")
         print(f"Temp: {data['main']['temp']}°C")
         print(f"Sky:  {data['weather'][0]['description'].capitalize()}")
@@ -75,13 +81,13 @@ def fetch_weather(city, api_key):
 if __name__ == "__main__":
     print("--- Starting Secretless Weather App ---")
     
-    # 1. Get the JWT from GitHub
+    # 1. Get JWT from GitHub
     jwt = get_github_jwt()
     
-    # 2. Exchange it for a Conjur Token
+    # 2. Exchange for Conjur Token
     token = get_conjur_token(jwt)
     
-    # 3. Pull paths directly from your screenshots
+    # 3. Use your exact paths from Screenshot 1
     key_path = "data/vault/DSOWeatherApp/Website-GenericWebApp-10.0.0.1-weatherAPIKey/password"
     city_path = "data/vault/DSOWeatherApp/Website-GenericWebApp-UserSelectedCity-WeatherCity/password"
     
