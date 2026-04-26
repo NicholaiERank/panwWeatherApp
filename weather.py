@@ -9,47 +9,59 @@ CONJUR_URL = "https://nranktest.secretsmgr.cyberark.cloud/api"
 AUTHN_ID = "githubWeatherAuthenticator"
 ACCOUNT = "conjur"
 
-def debug_jwt(jwt):
-    """Decodes and prints the JWT claims so we can see the 'Passport' details."""
-    try:
-        payload = jwt.split('.')[1]
-        payload += '=' * (4 - len(payload) % 4) # Fix padding
-        decoded = json.loads(base64.b64decode(payload).decode('utf-8'))
-        print("\n--- DEBUG: GITHUB JWT CLAIMS ---")
-        for key, value in decoded.items():
-            print(f"{key}: {value}")
-        print("--------------------------------\n")
-        return decoded
-    except:
-        print("Could not decode JWT for debugging.")
-
 def get_github_jwt():
     url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
     token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    # Audience must match your Authenticator config
     resp = requests.get(f"{url}&audience=conjur", headers={"Authorization": f"bearer {token}"})
     resp.raise_for_status()
     return resp.json()['value']
 
 def get_conjur_token(jwt):
     jwt = jwt.strip()
-    debug_jwt(jwt) # Print the claims to the log!
+    login_id = "host/data/weatherAppFetcher".replace("/", "%2F")
+    auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/{login_id}/authenticate"
     
-    # CLEAN URL - Let Conjur find the host via token-app-property
-    auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/authenticate"
-    
-    try:
-        # Standard POST with the JWT in the body
-        response = requests.post(auth_url, data=f"jwt={jwt}", timeout=10)
-        
-        if response.status_code == 401:
-            print(f"401 ERROR: Bouncer says: {response.text}")
-            print("Check if 'workflow' in the DEBUG list above matches your Workload ID exactly.")
-            sys.exit(1)
-            
-        response.raise_for_status()
-        return base64.b64encode(response.text.encode()).decode()
-    except Exception as e:
-        print(f"Auth Failed: {e}")
+    response = requests.post(auth_url, data=f"jwt={jwt}", timeout=10)
+    if response.status_code != 200:
+        print(f"Login failed: {response.text}")
         sys.exit(1)
+    
+    # We MUST base64 encode the token for the header
+    return base64.b64encode(response.text.encode()).decode()
 
-# ... (Rest of your get_secret and main functions remain the same)
+def get_secret(path, token):
+    """Fetches secret and RAISE ERROR if it fails."""
+    url = f"{CONJUR_URL}/secrets/{ACCOUNT}/variable/{path.replace('/', '%2F')}"
+    headers = {"Authorization": f'Token token="{token}"'}
+    
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        print(f"ERROR: Could not fetch secret [{path}]")
+        print(f"Conjur says: {resp.status_code} - {resp.text}")
+        print("FIX: Ensure 'weatherAppFetcher' is a member of the Delegation Group for this safe.")
+        sys.exit(1)
+    return resp.text
+
+if __name__ == "__main__":
+    print("--- 1. Authenticating with Conjur Cloud ---")
+    jwt = get_github_jwt()
+    token = get_conjur_token(jwt)
+    print("Handshake successful!")
+    
+    print("\n--- 2. Fetching Secrets from Vault ---")
+    # Using your exact paths from Screenshot 1
+    api_key = get_secret("data/vault/DSOWeatherApp/Website-GenericWebApp-10.0.0.1-weatherAPIKey/password", token)
+    city = get_secret("data/vault/DSOWeatherApp/Website-GenericWebApp-UserSelectedCity-WeatherCity/password", token)
+    
+    print(f"Retrieved target city: {city}")
+    
+    print("\n--- 3. Weather Report ---")
+    weather_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+    res = requests.get(weather_url)
+    
+    if res.status_code == 200:
+        data = res.json()
+        print(f"City: {data['name']} | Temp: {data['main']['temp']}°C | Sky: {data['weather'][0]['description']}")
+    else:
+        print(f"Weather API Error: {res.status_code} - {res.text}")
