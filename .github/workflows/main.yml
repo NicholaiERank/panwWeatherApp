@@ -1,14 +1,23 @@
 name: Run Weather App
-on: [push] # Run every time we push code
+on: [push]
 
 jobs:
   check-weather:
-    runs-on: self-hosted # This is the magic phrase
+    runs-on: self-hosted
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Script
+      - name: Setup Environment and Run
         run: |
+          # 1. Create a virtual environment in the current folder
+          python3 -m venv venv
+          
+          # 2. Activate it
           source venv/bin/activate
+          
+          # 3. Install the specific 'requests' library inside the venv
+          pip install requests
+          
+          # 4. Run the script
           python3 weather.py "Melbourne"
