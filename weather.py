@@ -28,27 +28,29 @@ def get_github_jwt():
 
 def get_conjur_token(jwt):
     """Exchanges the GitHub JWT for a Conjur Session Token."""
-    # NO LOGIN ID IN THE URL when token-app-property is used!
+    # Ensure no whitespace on the JWT
+    jwt = jwt.strip()
+    
+    # Clean URL - no identity needed if using token-app-property
     auth_url = f"{CONJUR_URL}/authn-jwt/{AUTHN_ID}/{ACCOUNT}/authenticate"
     
-    print(f"Post to: {auth_url}") # Debugging
-    
+    # Clean headers - remove Accept-Encoding!
     headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept-Encoding": "base64"
+        "Content-Type": "application/x-www-form-urlencoded"
     }
     
     try:
-        # Pass the JWT in the body
+        # Standard POST with the JWT in the body
         response = requests.post(auth_url, data=f"jwt={jwt}", headers=headers, timeout=10)
         response.raise_for_status()
+        
         # Conjur session tokens must be Base64 encoded for the Authorization header
         return base64.b64encode(response.text.encode()).decode()
     except Exception as e:
         print(f"Failed to authenticate with Conjur: {e}")
-        # Print response text if available to see the real error
         if hasattr(e, 'response') and e.response is not None:
-            print(f"Response: {e.response.text}")
+             print(f"Status Code: {e.response.status_code}")
+             print(f"Response Text: {e.response.text}")
         sys.exit(1)
 
 def get_secret(variable_path, conjur_token):
