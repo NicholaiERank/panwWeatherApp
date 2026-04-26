@@ -1,23 +1,37 @@
+# 1. This NAME must exactly match the Workload ID in the Conjur GUI
 name: weatherAppFetcher
-on: [push]
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
+
+# 2. CRITICAL: This allows the runner to request the OIDC JWT from GitHub
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   check-weather:
     runs-on: self-hosted
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Environment and Run
+      - name: Setup Environment and Run Script
+        # 3. Pass the Conjur connection details to the Python script
+        env:
+          # Update <TENANT> with your actual CyberArk Cloud tenant name
+          CONJUR_URL: "https://nranktest.cyberark.cloud/api"
+          CONJUR_AUTHN_ID: "githubWeatherAuthenticator"
         run: |
-          # 1. Create a virtual environment in the current folder
+          # Create and activate a clean virtual environment
           python3 -m venv venv
-          
-          # 2. Activate it
           source venv/bin/activate
           
-          # 3. Install the specific 'requests' library inside the venv
+          # Install dependencies
           pip install requests
           
-          # 4. Run the script
-          python3 weather.py "Melbourne"
+          # Execute the weather script
+          python3 weather.py
