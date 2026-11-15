@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   check-weather:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout Code
@@ -20,7 +20,7 @@ jobs:
       - name: Setup and Run
         env:
           # Updated to match the secretsmgr subdomain
-          CONJUR_URL: "https://nranktest.secretsmgr.cyberark.cloud/api"
+          CONJUR_URL: "https://anzmislab.secretsmgr.cyberark.cloud/api"
           CONJUR_AUTHN_ID: "githubWeatherAuthenticator"
         run: |
           python3 -m venv venv
