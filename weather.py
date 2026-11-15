@@ -4,7 +4,7 @@ import sys
 import base64
 
 # --- CONFIG ---
-CONJUR_URL = "https://nranktest.secretsmgr.cyberark.cloud/api"
+CONJUR_URL = "https://anzmislab.secretsmgr.cyberark.cloud/api"
 AUTHN_ID = "githubWeatherAuthenticator"
 ACCOUNT = "conjur"
 
